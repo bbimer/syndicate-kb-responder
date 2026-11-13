@@ -45,12 +45,24 @@ def parse_lead_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
     deposit_est = payload.get("deposit_est", "500_2000")
     current_stage = payload.get("current_stage", "In_DM")
     quote_sample = payload.get("quote_sample", "")
+    if not quote_sample:
+        if payload.get("assembled_thread_text"):
+            quote_sample = payload["assembled_thread_text"]
+        elif payload.get("messages") and isinstance(payload["messages"], list) and len(payload["messages"]) > 0:
+            thread_lines = [f"{m.get('author', 'User')}: {m.get('text', '')}" for m in payload["messages"]]
+            quote_sample = "\n".join(thread_lines)
+        elif payload.get("thread") and isinstance(payload["thread"], list) and len(payload["thread"]) > 0:
+            thread_lines = [f"{m.get('sender_name', m.get('author', 'User'))}: {m.get('text', '')}" for m in payload["thread"]]
+            quote_sample = "\n".join(thread_lines)
+
+    chat_id = payload.get("chat_id") or payload.get("source_chat_id")
 
     return {
         "user_id": payload.get("user_id"),
         "username": payload.get("username"),
         "display_name": payload.get("display_name"),
-        "source_chat_id": payload.get("source_chat_id"),
+        "chat_id": chat_id,
+        "source_chat_id": chat_id,
         "source_chat_title": payload.get("source_chat_title"),
         "pain_category": payload.get("pain_category", "general"),
         "matched_module": module_code,
@@ -59,5 +71,7 @@ def parse_lead_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
         "current_stage": current_stage,
         "quote_sample": quote_sample,
         "lead_segment": payload.get("lead_segment", "clean_retail"),
+        "thread": payload.get("thread", []),
+        "top_slang": payload.get("top_slang", []),
         "raw_payload": payload
     }

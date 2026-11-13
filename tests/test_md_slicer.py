@@ -181,3 +181,77 @@ def test_parse_closer_playbook(tmp_path):
     assert "AdsPower" in rows[1][1]
     assert "App Attest" in rows[1][2]
     conn.close()
+
+
+SAMPLE_DAY1 = """
+# День 1 — Словарь терминов и механик рынка
+
+### 1. Нативная монета (Coin) `[YT]`
+*Источник: #source/youtube*
+Это базовая расчетная единица блокчейна первого уровня...
+---
+### 2. Токен (Token) `[YT]`
+*Источник: #source/youtube*
+Под капотом это смарт-контракт ERC-20...
+---
+### 3. Стейблкоин (Stablecoin) `[YT]`
+*Источник: #source/youtube*
+Это токен на блокчейне с курсом около $1.00...
+"""
+
+
+def test_parse_day1_dictionary(tmp_path):
+    db_file = tmp_path / "test_kb.db"
+    kb_dir = tmp_path / "kb"
+    kb_dir.mkdir()
+
+    day1_file = kb_dir / "Day1.md"
+    day1_file.write_text(SAMPLE_DAY1, encoding="utf-8")
+
+    indexer = KnowledgeBaseIndexer(db_file, kb_dir)
+    indexer.init_db()
+
+    cnt = indexer.parse_day1_dictionary(day1_file)
+    assert cnt == 3
+
+    conn = sqlite3.connect(db_file)
+    cur = conn.cursor()
+    cur.execute("SELECT term, definition FROM glossary WHERE module = 'M01'")
+    rows = cur.fetchall()
+    assert len(rows) == 3
+    assert rows[0][0] == "Нативная монета (Coin)"
+    assert "расчетная единица" in rows[0][1]
+    assert rows[1][0] == "Токен (Token)"
+    assert rows[2][0] == "Стейблкоин (Stablecoin)"
+    conn.close()
+
+
+def test_reindexing_preserves_chat_outbound_history(tmp_path):
+    db_file = tmp_path / "test_kb.db"
+    kb_dir = tmp_path / "kb"
+    kb_dir.mkdir()
+
+    indexer = KnowledgeBaseIndexer(db_file, kb_dir)
+    indexer.init_db()
+
+    # Insert a record in chat_outbound_history
+    conn = sqlite3.connect(db_file)
+    conn.execute(
+        "INSERT INTO chat_outbound_history (chat_id, our_response_text) VALUES (?, ?)",
+        ("chat_123", "Outbound reply preserved")
+    )
+    conn.commit()
+    conn.close()
+
+    # Run full index_all
+    indexer.index_all()
+
+    # Verify history still exists!
+    conn = sqlite3.connect(db_file)
+    cur = conn.cursor()
+    cur.execute("SELECT chat_id, our_response_text FROM chat_outbound_history WHERE chat_id = 'chat_123'")
+    rows = cur.fetchall()
+    assert len(rows) == 1
+    assert rows[0][1] == "Outbound reply preserved"
+    conn.close()
+

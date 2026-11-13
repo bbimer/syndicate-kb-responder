@@ -10,7 +10,8 @@ from config.settings import settings
 from src.generator.prompts import (
     STATIC_SYSTEM_PREFIX,
     build_hook_prompt,
-    build_shield_prompt
+    build_shield_prompt,
+    build_followup_prompt
 )
 
 
@@ -110,7 +111,7 @@ class DeepSeekClient:
 
     async def generate_hook(self, quote_sample: str, context: Dict[str, Any]) -> GenerationResult:
         prompt = build_hook_prompt(quote_sample, context)
-        return await self.generate(prompt, max_tokens=380)
+        return await self.generate(prompt, max_tokens=450)
 
     async def generate_shield(
         self,
@@ -120,4 +121,14 @@ class DeepSeekClient:
         deposit_est: str = "500_2000"
     ) -> GenerationResult:
         prompt = build_shield_prompt(incoming_text, context, stage=stage, deposit_est=deposit_est)
-        return await self.generate(prompt, max_tokens=180)
+        return await self.generate(prompt, max_tokens=220)
+
+    async def generate_followup(
+        self,
+        thread_context: str,
+        last_our_message: str,
+        lead_reply: str,
+        context: Dict[str, Any]
+    ) -> GenerationResult:
+        prompt = build_followup_prompt(thread_context, last_our_message, lead_reply, context)
+        return await self.generate(prompt, max_tokens=450)

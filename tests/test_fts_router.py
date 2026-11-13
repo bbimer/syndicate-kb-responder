@@ -58,3 +58,43 @@ def test_retrieve_context(router):
     assert "аудит" in ctx["battlecard"]["objection"].lower()
     assert ctx["chapter"] is not None
     assert ctx["deposit_est"] == "500_2000"
+
+
+def test_chat_outbound_history_and_deprioritization(router):
+    test_chat = "test_chat_deprioritize_999"
+    
+    # 1. Record outbound response
+    row_id = router.record_outbound(
+        chat_id=test_chat,
+        our_response_text="Тут дело в сервере TigerTrade, серверный стоп бьет по рынку.",
+        module_id="M04",
+        section_id="IV",
+        card_id="FAST_TRACK_1",
+        thread_topic="stop loss issue"
+    )
+    assert row_id > 0
+
+    # 2. Get recent outbound
+    recent = router.get_recent_outbound(test_chat, limit=5)
+    assert len(recent) >= 1
+    assert "TigerTrade" in recent[-1]["our_response_text"]
+
+    # 3. Get used sections and cards
+    used_sections, used_cards = router.get_used_sections_and_cards(test_chat, days=14)
+    assert "IV" in used_sections
+    assert "FAST_TRACK_1" in used_cards
+
+    # 4. Search battlecards with used_cards should deprioritize used card
+    cards = router.search_battlecards("AdsPower ферма", used_cards={"FAST_TRACK_1"})
+    if len(cards) > 1:
+        # If multiple cards matched, the first one should not be FAST_TRACK_1 unless all are used
+        assert f"{cards[0]['module']}_{cards[0]['card_num']}" != "FAST_TRACK_1" or len(cards) == 1
+
+    # 5. Retrieve context with chat_id
+    ctx = router.retrieve_context(
+        text="Почему выбило стоп на 2.5% вместо 2.0%?",
+        chat_id=test_chat
+    )
+    assert ctx["chat_id"] == test_chat
+    assert len(ctx["chat_memory"]) >= 1
+    assert "TigerTrade" in ctx["chat_memory"][-1]

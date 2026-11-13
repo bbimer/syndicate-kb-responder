@@ -25,7 +25,7 @@ class Settings:
         default_model = "deepseek/deepseek-chat" if "openrouter.ai" in self.deepseek_base_url else "deepseek-chat"
         self.deepseek_model: str = os.getenv("DEEPSEEK_MODEL", default_model)
         
-        self.max_tokens: int = int(os.getenv("MAX_TOKENS", "180"))
+        self.max_tokens: int = int(os.getenv("MAX_TOKENS", "450"))
         self.temperature: float = float(os.getenv("TEMPERATURE", "0.4"))
 
     @property

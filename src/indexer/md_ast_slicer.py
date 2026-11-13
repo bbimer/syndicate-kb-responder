@@ -142,6 +142,23 @@ class KnowledgeBaseIndexer:
             END;
         """)
 
+        # 4. Outbound chat history for chat memory & anti-repetition (persists across reindexing)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS chat_outbound_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id TEXT,
+                module_id TEXT,
+                section_id TEXT,
+                card_id TEXT,
+                thread_topic TEXT,
+                our_response_text TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_chat_outbound_chat_id ON chat_outbound_history (chat_id, created_at);
+        """)
+
         conn.commit()
         conn.close()
 
@@ -319,14 +336,66 @@ class KnowledgeBaseIndexer:
         conn.close()
         return indexed
 
+    def parse_day1_dictionary(self, file_path: Path) -> int:
+        """Parses Day 1 Dictionary of 55 market mechanics and terms into glossary table."""
+        raw_text = file_path.read_text(encoding="utf-8")
+        matches = list(re.finditer(r'^###\s+(\d+)\.\s*(.+?)$', raw_text, re.M))
+        if not matches:
+            return 0
+
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        indexed = 0
+
+        for i, m in enumerate(matches):
+            raw_title = m.group(2).strip()
+            clean_title = re.sub(r'[\s`]*\[(?:YT|WEB)\][\s`]*$', '', raw_title).strip()
+            clean_title = self._clean_quotes(clean_title)
+
+            start_pos = m.end()
+            end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(raw_text)
+            body = raw_text[start_pos:end_pos].strip()
+
+            # Clean source tags, markdown horizontal rules, and code blocks
+            body = re.sub(r'^\*Источник:.*?\*\s*', '', body, flags=re.M)
+            body = re.sub(r'^---\s*$', '', body, flags=re.M).strip()
+            body = self._strip_code_blocks(body)
+
+            raw_term = f"{clean_title}: {body}"
+
+            cur.execute("""
+                INSERT INTO glossary (module, term, definition, raw_content)
+                VALUES (?, ?, ?, ?);
+            """, ("M01", clean_title, body, raw_term))
+            indexed += 1
+
+        conn.commit()
+        conn.close()
+        return indexed
+
     def index_all(self) -> Dict[str, int]:
-        """Discovers knowledge base files and runs full indexing."""
-        # Reset database tables
-        if self.db_path.exists():
-            try:
-                os.remove(self.db_path)
-            except OSError:
-                pass
+        """Discovers knowledge base files and runs full indexing.
+        
+        Preserves chat_outbound_history across re-indexing runs!
+        """
+        # Initialize DB and tables if not already present
+        self.init_db()
+
+        # Reset KB content tables while strictly PRESERVING chat_outbound_history
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        cur.executescript("""
+            DROP TABLE IF EXISTS chapters_fts;
+            DROP TABLE IF EXISTS chapters;
+            DROP TABLE IF EXISTS battlecards_fts;
+            DROP TABLE IF EXISTS battlecards;
+            DROP TABLE IF EXISTS glossary_fts;
+            DROP TABLE IF EXISTS glossary;
+        """)
+        conn.commit()
+        conn.close()
+
+        # Re-initialize dropped tables
         self.init_db()
 
         module_paths = {
@@ -341,9 +410,22 @@ class KnowledgeBaseIndexer:
 
         closer_path = self.kb_dir / "20_Практика_и_Кейсы" / "M01_Fast_Track_Closer.md"
 
+        day1_paths = [
+            self.kb_dir / "10_База_знаний" / "📖 День 1 — Словарь терминов и механик рынка.md",
+            Path(r"D:\Obsidian\Syndicate Intelligence\Syndicate Intelligence\10_База_знаний\📖 День 1 — Словарь терминов и механик рынка.md"),
+            Path(r"C:\Users\root\Desktop\_Intelligence\nullspread-research-academy\exports\notebooklm_pack\Day_1_Dictionary_Master_55_Terms.md"),
+        ]
+
         total_chapters = 0
         total_battlecards = 0
         total_glossary = 0
+
+        # Index Day 1 Dictionary (55 terms)
+        for d1_p in day1_paths:
+            if d1_p.exists():
+                d1_count = self.parse_day1_dictionary(d1_p)
+                total_glossary += d1_count
+                break
 
         for mod, path in module_paths.items():
             if path.exists():

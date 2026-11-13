@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """Syndicate Knowledge Base Responder CLI.
 
-Ultra-fast objection-handling and public hook generator powered by DeepSeek v4.1,
-AST Markdown slicing of the 7-module Obsidian curriculum, FTS5 BM25 retrieval,
+Ultra-fast objection-handling, public hook generator, and follow-up dialog responder
+powered by DeepSeek v4.1, AST Markdown slicing of the 7-module Obsidian curriculum,
+Day 1 55-term dictionary, FTS5 BM25 retrieval with chat history deprioritization,
 and strict prefix caching.
 """
 
 from __future__ import annotations
 import argparse
 import asyncio
+import re
 import sys
 from pathlib import Path
+from typing import Optional
 
 from rich.console import Console
 from rich.table import Table
@@ -21,8 +24,19 @@ from src.indexer.md_ast_slicer import KnowledgeBaseIndexer
 from src.retrieval.fts_router import FTSRouter
 from src.generator.deepseek_client import DeepSeekClient
 from src.utils.json_loader import load_lead_context
+from src.utils.humanizer import humanize_text
 
 console = Console()
+
+
+def extract_variant(text: str, choice: str) -> str:
+    """Extracts a specific numbered or lettered variant block from generated text."""
+    choice_clean = choice.strip().upper()
+    pattern = rf'\[Вариант\s+{re.escape(choice_clean)}:[^\]]*\]\s*([\s\S]*?)(?=\n\[Вариант|\Z)'
+    m = re.search(pattern, text, re.I)
+    if m:
+        return m.group(1).strip()
+    return text.strip()
 
 
 def cmd_index(args: argparse.Namespace) -> None:
@@ -46,7 +60,7 @@ def cmd_index(args: argparse.Namespace) -> None:
     table.add_row("Modules (M01–M07)", str(stats["modules"]))
     table.add_row("Chapters (Layers 1, 2, 4, 5)", str(stats["chapters"]))
     table.add_row("Battlecards (70 module + 4 closer)", str(stats["battlecards"]))
-    table.add_row("Glossary Terms (Section VII)", str(stats["glossary"]))
+    table.add_row("Glossary Terms (Day 1 + M02–M07)", str(stats["glossary"]))
     console.print(table)
 
 
@@ -54,29 +68,116 @@ async def cmd_hook(args: argparse.Namespace) -> None:
     """Generates a public Telegram chat hook under a user quote/pain."""
     quote_text = args.text or ""
     module_filter = args.module
-    deposit_est = "500_2000"
+    deposit_est = args.deposit or "500_2000"
+    chat_id = args.chat
 
-    if args.from_json:
-        lead_data = load_lead_context(args.from_json)
+    from_json_src = "-" if args.from_export else args.from_json
+    if from_json_src:
+        lead_data = load_lead_context(from_json_src)
         if not quote_text:
             quote_text = lead_data.get("quote_sample") or ""
         if not module_filter:
             module_filter = lead_data.get("matched_module")
-        deposit_est = lead_data.get("deposit_est") or deposit_est
+        if not args.deposit and lead_data.get("deposit_est"):
+            deposit_est = lead_data["deposit_est"]
+        if not chat_id:
+            chat_id = lead_data.get("chat_id")
 
     if not quote_text:
-        console.print("[bold red]Error: No text provided. Use --text or --from-json.[/bold red]")
+        console.print("[bold red]Error: No text provided. Use --text, --from-json, or --from-export.[/bold red]")
         sys.exit(1)
 
     router = FTSRouter(settings.db_path)
-    context = router.retrieve_context(quote_text, module=module_filter, deposit_est=deposit_est)
+    context = router.retrieve_context(quote_text, module=module_filter, deposit_est=deposit_est, chat_id=chat_id)
 
     client = DeepSeekClient()
     result = await client.generate_hook(quote_text, context)
 
+    # Humanize output text (typography, quotes, scalper slang)
+    humanized_output = humanize_text(result.text)
+
     # Output result
-    console.print(Panel(result.text, title="[bold green]🎯 Tactical Public Hook Matrix (3 Angles)[/bold green]", subtitle=f"Module: {module_filter or 'Auto'}"))
+    console.print(Panel(
+        humanized_output,
+        title="[bold green]🎯 Tactical Public Hook Matrix (3 Calibrated Angles)[/bold green]",
+        subtitle=f"Chat: {chat_id or 'Global'} | Module: {module_filter or 'Auto'}"
+    ))
     console.print(f"[dim]{result.format_telemetry()}[/dim]")
+
+    # Commit to chat outbound memory if requested
+    if args.commit:
+        choice = str(args.commit)
+        committed_text = extract_variant(humanized_output, choice) if choice in ("1", "2", "3") else humanized_output
+        row_id = router.record_outbound(
+            chat_id=str(chat_id or "global"),
+            our_response_text=committed_text,
+            module_id=(context.get("chapter") or {}).get("module"),
+            section_id=(context.get("chapter") or {}).get("section_num"),
+            card_id=str((context.get("battlecard") or {}).get("card_num", "")),
+            thread_topic=quote_text[:120]
+        )
+        console.print(f"[bold green]✓ Recorded outbound response (Option {choice}) to chat memory (row #{row_id})[/bold green]")
+
+
+async def cmd_followup(args: argparse.Namespace) -> None:
+    """Generates 3 follow-up dialog options (Rapport, Hidden Bait, DM Bridge)."""
+    thread_context = args.context or ""
+    last_our = args.last_our or ""
+    lead_reply = args.reply or ""
+    module_filter = args.module
+    deposit_est = args.deposit or "500_2000"
+    chat_id = args.chat
+
+    from_json_src = "-" if args.from_export else args.from_json
+    if from_json_src:
+        lead_data = load_lead_context(from_json_src)
+        if not chat_id:
+            chat_id = lead_data.get("chat_id")
+        if not thread_context:
+            thread_context = lead_data.get("quote_sample") or ""
+        thread_msgs = lead_data.get("thread", [])
+        if not lead_reply and thread_msgs:
+            lead_reply = thread_msgs[-1].get("text", "")
+        if not module_filter:
+            module_filter = lead_data.get("matched_module")
+        if not args.deposit and lead_data.get("deposit_est"):
+            deposit_est = lead_data["deposit_est"]
+
+    router = FTSRouter(settings.db_path)
+
+    # If last_our is not given, attempt to pull our most recent outbound message from DB
+    if not last_our and chat_id:
+        recent = router.get_recent_outbound(chat_id, limit=1)
+        if recent:
+            last_our = recent[0]["our_response_text"]
+
+    query_for_context = f"{thread_context} {lead_reply}".strip()
+    context = router.retrieve_context(query_for_context, module=module_filter, deposit_est=deposit_est, chat_id=chat_id)
+
+    client = DeepSeekClient()
+    result = await client.generate_followup(thread_context, last_our, lead_reply, context)
+
+    humanized_output = humanize_text(result.text)
+
+    console.print(Panel(
+        humanized_output,
+        title="[bold yellow]⚡ Tactical Follow-up Matrix (Rapport, Bait, DM Bridge)[/bold yellow]",
+        subtitle=f"Chat: {chat_id or 'Global'} | Lead Reply: {lead_reply[:50] or 'N/A'}"
+    ))
+    console.print(f"[dim]{result.format_telemetry()}[/dim]")
+
+    if args.commit:
+        choice = str(args.commit).upper()
+        committed_text = extract_variant(humanized_output, choice) if choice in ("A", "B", "C") else humanized_output
+        row_id = router.record_outbound(
+            chat_id=str(chat_id or "global"),
+            our_response_text=committed_text,
+            module_id=(context.get("chapter") or {}).get("module"),
+            section_id=(context.get("chapter") or {}).get("section_num"),
+            card_id=str((context.get("battlecard") or {}).get("card_num", "")),
+            thread_topic=lead_reply[:120] or thread_context[:120]
+        )
+        console.print(f"[bold green]✓ Recorded follow-up response (Option {choice}) to chat memory (row #{row_id})[/bold green]")
 
 
 async def cmd_shield(args: argparse.Namespace) -> None:
@@ -85,9 +186,11 @@ async def cmd_shield(args: argparse.Namespace) -> None:
     stage = args.stage or "In_DM"
     deposit_est = args.deposit or "500_2000"
     module_filter = args.module
+    chat_id = args.chat
 
-    if args.from_json:
-        lead_data = load_lead_context(args.from_json)
+    from_json_src = "-" if args.from_export else args.from_json
+    if from_json_src:
+        lead_data = load_lead_context(from_json_src)
         if not incoming_text:
             incoming_text = lead_data.get("quote_sample") or ""
         if not module_filter:
@@ -96,24 +199,39 @@ async def cmd_shield(args: argparse.Namespace) -> None:
             stage = lead_data["current_stage"]
         if not args.deposit and lead_data.get("deposit_est"):
             deposit_est = lead_data["deposit_est"]
+        if not chat_id:
+            chat_id = lead_data.get("chat_id")
 
     if not incoming_text:
-        console.print("[bold red]Error: No incoming text provided. Use --text or --from-json.[/bold red]")
+        console.print("[bold red]Error: No incoming text provided. Use --text, --from-json, or --from-export.[/bold red]")
         sys.exit(1)
 
     router = FTSRouter(settings.db_path)
-    context = router.retrieve_context(incoming_text, module=module_filter, deposit_est=deposit_est)
+    context = router.retrieve_context(incoming_text, module=module_filter, deposit_est=deposit_est, chat_id=chat_id)
 
     client = DeepSeekClient()
     result = await client.generate_shield(incoming_text, context, stage=stage, deposit_est=deposit_est)
 
+    humanized_output = humanize_text(result.text)
+
     # Output result
     console.print(Panel(
-        result.text,
+        humanized_output,
         title="[bold blue]DM Objection Shield[/bold blue]",
-        subtitle=f"Stage: {stage} | Deposit: {deposit_est} | Module: {module_filter or 'Auto'}"
+        subtitle=f"Stage: {stage} | Deposit: ${deposit_est} | Module: {module_filter or 'Auto'}"
     ))
     console.print(f"[dim]{result.format_telemetry()}[/dim]")
+
+    if args.commit:
+        row_id = router.record_outbound(
+            chat_id=str(chat_id or "dm_global"),
+            our_response_text=humanized_output,
+            module_id=(context.get("chapter") or {}).get("module"),
+            section_id=(context.get("chapter") or {}).get("section_num"),
+            card_id=str((context.get("battlecard") or {}).get("card_num", "")),
+            thread_topic=incoming_text[:120]
+        )
+        console.print(f"[bold green]✓ Recorded DM shield response to chat memory (row #{row_id})[/bold green]")
 
 
 def cmd_card(args: argparse.Namespace) -> None:
@@ -153,7 +271,23 @@ def main() -> None:
     p_hook = subparsers.add_parser("hook", help="Generate public group hook")
     p_hook.add_argument("--text", help="Message or pain text from group")
     p_hook.add_argument("--module", help="Module filter (e.g. M01, M04)")
+    p_hook.add_argument("--deposit", help="Estimated deposit (500_2000, 1000, etc.)")
+    p_hook.add_argument("--chat", help="Chat ID for memory and anti-repetition")
+    p_hook.add_argument("--commit", help="Commit chosen variant (1, 2, or 3) to chat outbound memory")
     p_hook.add_argument("--from-json", help="Path, JSON string, or '-' for stdin from tg-closer-crm")
+    p_hook.add_argument("--from-export", action="store_true", help="Read exported JSON thread from stdin")
+
+    # followup
+    p_followup = subparsers.add_parser("followup", help="Generate follow-up responses (Rapport, Bait, DM Bridge)")
+    p_followup.add_argument("--context", help="Thread background context")
+    p_followup.add_argument("--last-our", help="Text of our previous message")
+    p_followup.add_argument("--reply", help="Incoming reply from lead")
+    p_followup.add_argument("--chat", help="Chat ID for memory and anti-repetition")
+    p_followup.add_argument("--module", help="Module filter (e.g. M01, M04)")
+    p_followup.add_argument("--deposit", help="Estimated deposit")
+    p_followup.add_argument("--commit", help="Commit chosen variant (A, B, or C) to chat outbound memory")
+    p_followup.add_argument("--from-json", help="Path, JSON string, or '-' for stdin from tg-closer-crm")
+    p_followup.add_argument("--from-export", action="store_true", help="Read exported JSON thread from stdin")
 
     # shield
     p_shield = subparsers.add_parser("shield", help="Generate DM objection response")
@@ -161,7 +295,10 @@ def main() -> None:
     p_shield.add_argument("--stage", help="Funnel stage (In_DM, Legend_&_Media, Test_20, Passed)")
     p_shield.add_argument("--deposit", help="Estimated deposit (500_2000, 1000_2000, or exact amount)")
     p_shield.add_argument("--module", help="Module filter (e.g. M01, M04)")
+    p_shield.add_argument("--chat", help="Chat ID / Lead ID for outbound history")
+    p_shield.add_argument("--commit", action="store_true", help="Commit response to chat memory")
     p_shield.add_argument("--from-json", help="Path, JSON string, or '-' for stdin from tg-closer-crm")
+    p_shield.add_argument("--from-export", action="store_true", help="Read exported JSON thread from stdin")
 
     # card
     p_card = subparsers.add_parser("card", help="Lookup battlecards")
@@ -175,6 +312,8 @@ def main() -> None:
         cmd_index(args)
     elif args.command == "hook":
         asyncio.run(cmd_hook(args))
+    elif args.command == "followup":
+        asyncio.run(cmd_followup(args))
     elif args.command == "shield":
         asyncio.run(cmd_shield(args))
     elif args.command == "card":
