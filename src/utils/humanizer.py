@@ -10,9 +10,9 @@ from typing import Dict, List, Tuple
 
 # Mapping of formal trading and exchange terms to native scalper chat slang
 SLANG_REPLACEMENTS: List[Tuple[re.Pattern, str]] = [
-    # Taker / Maker fees
-    (re.compile(r'\b(?:taker\s*fee|комисси[яиею]\s+тейкера)\b', re.I), 'комса по рынку'),
-    (re.compile(r'\b(?:maker\s*fee|комисси[яиею]\s+мейкера)\b', re.I), 'мейкер-комса'),
+    # Taker / Maker fees (captures optional leading "комиссия/комиссии" to prevent "комиссии комса по рынку")
+    (re.compile(r'\b(?:комисси[яиейюь]|комиссиях|комиссиям)?\s*taker\s*fees?\b|\bкомисси[яиейюь]\s+тейкера\b', re.I), 'комса по рынку'),
+    (re.compile(r'\b(?:комисси[яиейюь]|комиссиях|комиссиям)?\s*maker\s*fees?\b|\bкомисси[яиейюь]\s+мейкера\b', re.I), 'мейкер-комса'),
     
     # Slippage & market impact
     (re.compile(r'\b(?:market\s*impact)\b', re.I), 'размазывание об стакан'),
@@ -38,6 +38,12 @@ SLANG_REPLACEMENTS: List[Tuple[re.Pattern, str]] = [
     
     # Terminals
     (re.compile(r'\bтерминал(?:а|е|у|ом)?\s+(CScalp|TigerTrade|Tiger)\b', re.I), r'привод \1'),
+
+    # Public chat anti-ban sanitization (convert internal jargon to organic trader terms)
+    (re.compile(r'\b(?:региональн(?:ых|ые|ым|ой|ую)|азиатск(?:их|ие|им|ой|ую))\s+нод(?:ах|ы|ам|е|у|ами)?\b', re.I), 'региональных площадках'),
+    (re.compile(r'\bнод(?:ах|ы|ам|е|у|ами)\b', re.I), 'площадках'),
+    (re.compile(r'\bшлюз(?:ах|ы|ам|е|у|ами|ов)?\b', re.I), 'маршрутах'),
+    (re.compile(r'\bбез\s+риска\b', re.I), 'без направленного риска'),
 ]
 
 
@@ -59,10 +65,13 @@ def humanize_text(text: str) -> str:
     for pattern, replacement in SLANG_REPLACEMENTS:
         out = pattern.sub(replacement, out)
 
-    # 4. Clean double quotes around already lowercase words: e.g. "отложка" -> отложка
+    # 4. Clean accidental duplicate words like "комиссия комса" or "комиссии комса"
+    out = re.sub(r'\bкомисси[яиейюь]\s+комс([аеуыой])\b', r'комс\1', out, flags=re.I)
+
+    # 5. Clean double quotes around already lowercase words: e.g. "отложка" -> отложка
     out = re.sub(r'"([а-яёa-z0-9_-]{2,20})"', r'\1', out)
 
-    # 5. Clean excessive spaces
+    # 6. Clean excessive spaces
     out = re.sub(r'[ \t]+', ' ', out)
     out = re.sub(r' \n', '\n', out)
     out = re.sub(r'\n{3,}', '\n\n', out)

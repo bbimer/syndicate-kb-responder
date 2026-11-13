@@ -76,6 +76,9 @@ def test_build_followup_prompt():
     assert "[Вариант A: Раппорт и уточнение]" in prompt
     assert "[Вариант B: Скрытая наживка]" in prompt
     assert "[Вариант C: Мостик в ЛС]" in prompt
+    assert "ноды" in prompt  # forbidden list check
+    assert "без риска" in prompt  # forbidden list check
+    assert "телемагазина" in prompt  # tv shop questions ban check
 
 
 def test_extract_variant_helper():

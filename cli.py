@@ -10,7 +10,9 @@ and strict prefix caching.
 from __future__ import annotations
 import argparse
 import asyncio
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -37,6 +39,47 @@ def extract_variant(text: str, choice: str) -> str:
     if m:
         return m.group(1).strip()
     return text.strip()
+
+
+def copy_to_clipboard(text: str) -> bool:
+    """Copies text to the system clipboard on Windows using built-in clip.exe."""
+    if not text:
+        return False
+    try:
+        subprocess.run(["clip"], input=text, text=True, encoding="utf-8", check=True)
+        return True
+    except Exception:
+        return False
+
+
+def prompt_user_choice(prompt_msg: str) -> str:
+    """Safely prompts the operator for a choice.
+    
+    Supports both interactive TTY and piped console runs on Windows.
+    Safely skips in automated/headless agent runs.
+    """
+    # If running in automated agent harness without interactive user attached, skip
+    if os.environ.get("ANTIGRAVITY_AGENT") == "1" and not sys.stdin.isatty():
+        return ""
+
+    # 1. Direct interactive TTY
+    if sys.stdin.isatty():
+        try:
+            return input(prompt_msg).strip()
+        except (EOFError, KeyboardInterrupt):
+            return ""
+
+    # 2. Piped input on Windows: attach to console input device
+    if os.name == 'nt':
+        try:
+            with open("CONIN$", "r") as con:
+                sys.stdout.write(prompt_msg)
+                sys.stdout.flush()
+                return con.readline().strip()
+        except Exception:
+            pass
+
+    return ""
 
 
 def cmd_index(args: argparse.Namespace) -> None:
@@ -104,10 +147,11 @@ async def cmd_hook(args: argparse.Namespace) -> None:
     ))
     console.print(f"[dim]{result.format_telemetry()}[/dim]")
 
-    # Commit to chat outbound memory if requested
-    if args.commit:
-        choice = str(args.commit)
-        committed_text = extract_variant(humanized_output, choice) if choice in ("1", "2", "3") else humanized_output
+    # Commit to chat outbound memory (either explicit --commit or interactive prompt)
+    choice = str(args.commit).strip() if args.commit else prompt_user_choice("Сохранить вариант в память чата? [1/2/3, Enter — пропустить]: ")
+    if choice:
+        clean_choice = choice.strip().upper()
+        committed_text = extract_variant(humanized_output, clean_choice) if clean_choice in ("1", "2", "3") else humanized_output
         row_id = router.record_outbound(
             chat_id=str(chat_id or "global"),
             our_response_text=committed_text,
@@ -116,7 +160,9 @@ async def cmd_hook(args: argparse.Namespace) -> None:
             card_id=str((context.get("battlecard") or {}).get("card_num", "")),
             thread_topic=quote_text[:120]
         )
-        console.print(f"[bold green]✓ Recorded outbound response (Option {choice}) to chat memory (row #{row_id})[/bold green]")
+        console.print(f"[bold green]✓ Записано в память чата {chat_id or 'global'} (Вариант {clean_choice}, row #{row_id})[/bold green]")
+        if copy_to_clipboard(committed_text):
+            console.print("[bold green]✓ Текст скопирован в буфер обмена (готов к отправке в Telegram)[/bold green]")
 
 
 async def cmd_followup(args: argparse.Namespace) -> None:
@@ -166,9 +212,11 @@ async def cmd_followup(args: argparse.Namespace) -> None:
     ))
     console.print(f"[dim]{result.format_telemetry()}[/dim]")
 
-    if args.commit:
-        choice = str(args.commit).upper()
-        committed_text = extract_variant(humanized_output, choice) if choice in ("A", "B", "C") else humanized_output
+    # Commit to chat outbound memory (either explicit --commit or interactive prompt)
+    choice = str(args.commit).strip() if args.commit else prompt_user_choice("Сохранить вариант в память чата? [A/B/C, Enter — пропустить]: ")
+    if choice:
+        clean_choice = choice.strip().upper()
+        committed_text = extract_variant(humanized_output, clean_choice) if clean_choice in ("A", "B", "C") else humanized_output
         row_id = router.record_outbound(
             chat_id=str(chat_id or "global"),
             our_response_text=committed_text,
@@ -177,7 +225,9 @@ async def cmd_followup(args: argparse.Namespace) -> None:
             card_id=str((context.get("battlecard") or {}).get("card_num", "")),
             thread_topic=lead_reply[:120] or thread_context[:120]
         )
-        console.print(f"[bold green]✓ Recorded follow-up response (Option {choice}) to chat memory (row #{row_id})[/bold green]")
+        console.print(f"[bold green]✓ Записано в память чата {chat_id or 'global'} (Вариант {clean_choice}, row #{row_id})[/bold green]")
+        if copy_to_clipboard(committed_text):
+            console.print("[bold green]✓ Текст скопирован в буфер обмена (готов к отправке в Telegram)[/bold green]")
 
 
 async def cmd_shield(args: argparse.Namespace) -> None:

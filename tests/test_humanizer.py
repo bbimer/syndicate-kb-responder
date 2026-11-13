@@ -24,6 +24,13 @@ def test_trading_terms_translation():
     assert "протяжка" in res
 
 
+def test_taker_fee_duplicate_prevention():
+    input_text = "Даже если угадаешь, комиссии taker fee (0.06 - 0.1%) и протяжка съедят прибыль."
+    res = humanize_text(input_text)
+    assert "комиссии комса" not in res
+    assert "комса по рынку" in res
+
+
 def test_order_book_and_mark_price():
     input_text = "В order book видна плотность, но mark price разошлась с last price."
     res = humanize_text(input_text)
