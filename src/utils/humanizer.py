@@ -11,12 +11,13 @@ from typing import Dict, List, Tuple
 # Mapping of formal trading and exchange terms to native scalper chat slang
 SLANG_REPLACEMENTS: List[Tuple[re.Pattern, str]] = [
     # Taker / Maker fees (captures optional leading "комиссия/комиссии" to prevent "комиссии комса по рынку")
-    (re.compile(r'\b(?:комисси[яиейюь]|комиссиях|комиссиям)?\s*taker\s*fees?\b|\bкомисси[яиейюь]\s+тейкера\b', re.I), 'комса по рынку'),
-    (re.compile(r'\b(?:комисси[яиейюь]|комиссиях|комиссиям)?\s*maker\s*fees?\b|\bкомисси[яиейюь]\s+мейкера\b', re.I), 'мейкер-комса'),
+    (re.compile(r'\b(?:(?:комисси[яиейюь]|комиссиях|комиссиям)\s+)?taker\s*fees?\b|\bкомисси[яиейюь]\s+тейкера\b', re.I), 'комса по рынку'),
+    (re.compile(r'\b(?:(?:комисси[яиейюь]|комиссиях|комиссиям)\s+)?maker\s*fees?\b|\bкомисси[яиейюь]\s+мейкера\b', re.I), 'мейкер-комса'),
     
     # Slippage & market impact
     (re.compile(r'\b(?:market\s*impact)\b', re.I), 'размазывание об стакан'),
-    (re.compile(r'\b(?:проскальзывани[еяюем]|slippage)\b', re.I), 'протяжка'),
+    (re.compile(r'\b(?:проскальзывани(?:я|ях|ям|ями)|slippages)\b', re.I), 'протяжки'),
+    (re.compile(r'\b(?:проскальзывани[еюем]|slippage)\b', re.I), 'протяжка'),
     
     # Orderbook
     (re.compile(r'\b(?:order\s*book|книг[аеуыой]\s+ордеров)\b', re.I), 'стакан'),

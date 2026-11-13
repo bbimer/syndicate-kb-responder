@@ -11,7 +11,8 @@ from src.generator.prompts import (
     STATIC_SYSTEM_PREFIX,
     build_hook_prompt,
     build_shield_prompt,
-    build_followup_prompt
+    build_followup_prompt,
+    build_counter_prompt
 )
 
 
@@ -131,4 +132,14 @@ class DeepSeekClient:
         context: Dict[str, Any]
     ) -> GenerationResult:
         prompt = build_followup_prompt(thread_context, last_our_message, lead_reply, context)
+        return await self.generate(prompt, max_tokens=450)
+
+    async def generate_counter(
+        self,
+        dialogue_history: list[dict[str, str]],
+        new_reply: str,
+        context: Dict[str, Any],
+        deposit_est: str = "500_2000"
+    ) -> GenerationResult:
+        prompt = build_counter_prompt(dialogue_history, new_reply, context, deposit_est=deposit_est)
         return await self.generate(prompt, max_tokens=450)

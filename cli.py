@@ -10,6 +10,7 @@ and strict prefix caching.
 from __future__ import annotations
 import argparse
 import asyncio
+import json
 import os
 import re
 import subprocess
@@ -25,20 +26,11 @@ from config.settings import settings
 from src.indexer.md_ast_slicer import KnowledgeBaseIndexer
 from src.retrieval.fts_router import FTSRouter
 from src.generator.deepseek_client import DeepSeekClient
+from src.generator.session_engine import SessionEngine, extract_variant
 from src.utils.json_loader import load_lead_context
 from src.utils.humanizer import humanize_text
 
 console = Console()
-
-
-def extract_variant(text: str, choice: str) -> str:
-    """Extracts a specific numbered or lettered variant block from generated text."""
-    choice_clean = choice.strip().upper()
-    pattern = rf'\[Вариант\s+{re.escape(choice_clean)}:[^\]]*\]\s*([\s\S]*?)(?=\n\[Вариант|\Z)'
-    m = re.search(pattern, text, re.I)
-    if m:
-        return m.group(1).strip()
-    return text.strip()
 
 
 def copy_to_clipboard(text: str) -> bool:
@@ -46,7 +38,7 @@ def copy_to_clipboard(text: str) -> bool:
     if not text:
         return False
     try:
-        subprocess.run(["clip"], input=text, text=True, encoding="utf-8", check=True)
+        subprocess.run(["clip"], input=text, text=True, encoding="utf-8", capture_output=True, check=True)
         return True
     except Exception:
         return False
@@ -284,6 +276,106 @@ async def cmd_shield(args: argparse.Namespace) -> None:
         console.print(f"[bold green]✓ Recorded DM shield response to chat memory (row #{row_id})[/bold green]")
 
 
+async def cmd_session(args: argparse.Namespace) -> None:
+    """Runs a multi-turn interactive dialogue session (argumentative chess in Telegram)."""
+    quote_text = args.text or ""
+    module_filter = args.module
+    deposit_est = args.deposit or "500_2000"
+    chat_id = args.chat
+
+    from_json_src = "-" if args.from_export else args.from_json
+    if from_json_src:
+        lead_data = load_lead_context(from_json_src)
+        if not quote_text:
+            quote_text = lead_data.get("quote_sample") or ""
+        if not module_filter:
+            module_filter = lead_data.get("matched_module")
+        if not args.deposit and lead_data.get("deposit_est"):
+            deposit_est = lead_data["deposit_est"]
+        if not chat_id:
+            chat_id = lead_data.get("chat_id")
+
+    router = FTSRouter(settings.db_path)
+    client = DeepSeekClient()
+    session = SessionEngine(
+        router=router,
+        client=client,
+        chat_id=chat_id,
+        deposit_est=deposit_est,
+        module=module_filter
+    )
+
+    console.print("[bold cyan]=== Syndicate Dialogue Session Started ===[/bold cyan]")
+    console.print(f"[dim]Chat: {chat_id or 'Global'} | Module: {module_filter or 'Auto'} | Deposit: {deposit_est}[/dim]\n")
+
+    simulated_turns = []
+    if args.simulated_turns:
+        sim_str = args.simulated_turns.strip()
+        if Path(sim_str).exists() and Path(sim_str).is_file():
+            sim_str = Path(sim_str).read_text(encoding="utf-8")
+        simulated_turns = json.loads(sim_str)
+
+    if simulated_turns:
+        # Automated non-interactive playback of simulated turns
+        for i, turn in enumerate(simulated_turns, 1):
+            opp_text = turn.get("text") or (quote_text if i == 1 else "")
+            choice = str(turn.get("choice", 1))
+            console.print(f"[bold cyan]─── Ход {i} (Собеседник) ───[/bold cyan]\n«{opp_text}»\n")
+            humanized_output, context, result = await session.process_turn(opp_text)
+
+            card_info = (context.get("battlecard") or {}).get("card_num", "none")
+            sec_info = (context.get("chapter") or {}).get("section_num", "none")
+            title = f"[bold green]🎯 Tactical Hook Matrix (Turn {i})[/bold green]" if i == 1 else f"[bold green]⚔️ Counter Matrix (Turn {i})[/bold green]"
+            subtitle = f"Card: #{card_info} | Section: {sec_info} | Cost: ${result.cost_usd:.5f}"
+
+            console.print(Panel(humanized_output, title=title, subtitle=subtitle))
+            console.print(f"[dim]{result.format_telemetry()}[/dim]")
+
+            committed = session.commit_turn(opp_text, choice, humanized_output, context)
+            console.print(f"[bold green]✓ Записан Вариант {choice}:[/bold green] {committed[:80]}...\n")
+            copy_to_clipboard(committed)
+        return
+
+    # Interactive loop
+    current_opponent_text = quote_text
+    turn_idx = 1
+    while True:
+        if not current_opponent_text:
+            prompt = f"\n[Ход {turn_idx}] Введите ответ собеседника [Enter/q — выход]: "
+            current_opponent_text = prompt_user_choice(prompt)
+            if not current_opponent_text or current_opponent_text.strip().lower() in ("q", "quit", "exit"):
+                console.print("[dim]Сессия завершена оператором.[/dim]")
+                break
+
+        console.print(f"\n[bold cyan]─── Ход {turn_idx} (Генерация 3 ракурсов) ───[/bold cyan]")
+        humanized_output, context, result = await session.process_turn(current_opponent_text)
+
+        card_info = (context.get("battlecard") or {}).get("card_num", "none")
+        sec_info = (context.get("chapter") or {}).get("section_num", "none")
+        title = f"[bold green]🎯 Tactical Hook Matrix (Turn {turn_idx})[/bold green]" if turn_idx == 1 else f"[bold green]⚔️ Counter Matrix (Turn {turn_idx})[/bold green]"
+        subtitle = f"Chat: {chat_id or 'Global'} | Card: #{card_info} | Section: {sec_info}"
+
+        console.print(Panel(humanized_output, title=title, subtitle=subtitle))
+        console.print(f"[dim]{result.format_telemetry()}[/dim]")
+
+        choice = prompt_user_choice("Выберите вариант для отправки [1/2/3, Enter — пропустить, q — выход]: ")
+        if choice.strip().lower() in ("q", "quit", "exit"):
+            console.print("[dim]Сессия завершена.[/dim]")
+            break
+
+        clean_choice = choice.strip().upper()
+        if clean_choice in ("1", "2", "3", "A", "B", "C"):
+            committed = session.commit_turn(current_opponent_text, clean_choice, humanized_output, context)
+            console.print(f"[bold green]✓ Записано в память чата (Вариант {clean_choice})[/bold green]")
+            if copy_to_clipboard(committed):
+                console.print("[bold green]✓ Текст скопирован в буфер обмена (готов к отправке в Telegram)[/bold green]")
+        else:
+            console.print("[yellow]Ход пропущен без коммита в память чата.[/yellow]")
+
+        turn_idx += 1
+        current_opponent_text = None
+
+
 def cmd_card(args: argparse.Namespace) -> None:
     """Displays battlecard(s) by search query or card number."""
     router = FTSRouter(settings.db_path)
@@ -356,6 +448,16 @@ def main() -> None:
     p_card.add_argument("--module", help="Module code (M01-M07, FAST_TRACK)")
     p_card.add_argument("--num", type=int, help="Card number (1-10)")
 
+    # session
+    p_session = subparsers.add_parser("session", help="Multi-turn interactive dialogue session / argumentative chess")
+    p_session.add_argument("--chat", help="Chat ID for memory and anti-repetition")
+    p_session.add_argument("--deposit", help="Estimated deposit (500_2000, 1000, etc.)")
+    p_session.add_argument("--module", help="Module filter (e.g. M01, M04)")
+    p_session.add_argument("--text", help="Initial message / quote from lead")
+    p_session.add_argument("--from-json", help="Path, JSON string, or '-' for stdin from tg-closer-crm")
+    p_session.add_argument("--from-export", action="store_true", help="Read exported JSON thread from stdin")
+    p_session.add_argument("--simulated-turns", help="Path to JSON or JSON array string of simulated turns for automated testing")
+
     args = parser.parse_args()
 
     if args.command == "index":
@@ -368,6 +470,8 @@ def main() -> None:
         asyncio.run(cmd_shield(args))
     elif args.command == "card":
         cmd_card(args)
+    elif args.command == "session":
+        asyncio.run(cmd_session(args))
 
 
 if __name__ == "__main__":

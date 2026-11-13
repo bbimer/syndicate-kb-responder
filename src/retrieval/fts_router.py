@@ -260,12 +260,14 @@ class FTSRouter:
         text: str,
         module: Optional[str] = None,
         deposit_est: Optional[str] = "500_2000",
-        chat_id: Optional[str] = None
+        chat_id: Optional[str] = None,
+        exclude_cards: Optional[Set[str]] = None,
+        exclude_sections: Optional[Set[str]] = None
     ) -> Dict[str, Any]:
         """Unified context retrieval for prompt construction:
 
-        1. Best battlecard (deprioritizing cards used recently in this chat)
-        2. Best chapter (with scaled unit economics, deprioritizing used sections)
+        1. Best battlecard (deprioritizing cards used recently or excluded in this session)
+        2. Best chapter (with scaled unit economics, deprioritizing used/excluded sections)
         3. Relevant glossary terms
         4. Recent chat history / outbound memory for continuity & anti-repetition
         """
@@ -277,10 +279,18 @@ class FTSRouter:
             used_sections, used_cards = self.get_used_sections_and_cards(chat_id, days=14)
             recent_outbound = self.get_recent_outbound(chat_id, limit=5)
 
-        cards = self.search_battlecards(text, module=module, limit=1, used_cards=used_cards if chat_id else None)
+        if exclude_cards:
+            used_cards.update(str(c) for c in exclude_cards)
+        if exclude_sections:
+            used_sections.update(str(s) for s in exclude_sections)
+
+        has_card_filters = bool(chat_id or exclude_cards)
+        has_sec_filters = bool(chat_id or exclude_sections)
+
+        cards = self.search_battlecards(text, module=module, limit=1, used_cards=used_cards if has_card_filters else None)
         best_card = cards[0] if cards else None
 
-        chapters = self.search_chapters(text, module=module, limit=1, used_sections=used_sections if chat_id else None)
+        chapters = self.search_chapters(text, module=module, limit=1, used_sections=used_sections if has_sec_filters else None)
         best_chapter = None
         if chapters:
             ch = chapters[0]

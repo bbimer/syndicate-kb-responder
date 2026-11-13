@@ -30,6 +30,17 @@ def test_taker_fee_duplicate_prevention():
     assert "комиссии комса" not in res
     assert "комса по рынку" in res
 
+    # Verify no accidental space swallowing like "быкомса"
+    input_text_2 = "Ты хотя бы taker fee посчитал?"
+    res_2 = humanize_text(input_text_2)
+    assert "бы комса по рынку" in res_2
+    assert "быкомса" not in res_2
+
+
+def test_slippage_plural_and_singular():
+    assert humanize_text("ловишь свои проскальзывания") == "ловишь свои протяжки"
+    assert humanize_text("происходит проскальзывание ордера") == "происходит протяжка ордера"
+
 
 def test_order_book_and_mark_price():
     input_text = "В order book видна плотность, но mark price разошлась с last price."
