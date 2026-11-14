@@ -98,3 +98,43 @@ def test_chat_outbound_history_and_deprioritization(router):
     assert ctx["chat_id"] == test_chat
     assert len(ctx["chat_memory"]) >= 1
     assert "TigerTrade" in ctx["chat_memory"][-1]
+
+
+def test_slang_query_expansion_and_module_inference():
+    # 1. Martingale / averaging / falling knife -> M07
+    q1 = "на падающем ноже сижу не дышу маржи впритык"
+    expanded1 = FTSRouter.expand_query(q1)
+    assert "мартингейл" in expanded1
+    assert "ликвидация" in expanded1
+    assert FTSRouter.infer_module_from_slang(q1) == "M07"
+
+    # 2. Stop loss / breakeven / slippage -> M04
+    q2 = "сняло тиком в безубыток серверный стоп протянуло"
+    expanded2 = FTSRouter.expand_query(q2)
+    assert "проскальзывание" in expanded2
+    assert FTSRouter.infer_module_from_slang(q2) == "M04"
+
+    # 3. Delisting / cross-exchange / stuck -> M02
+    q3 = "делистинг монеты с биржи вывод закрыли"
+    expanded3 = FTSRouter.expand_query(q3)
+    assert "спред" in expanded3
+    assert FTSRouter.infer_module_from_slang(q3) == "M02"
+
+    # 4. AML / dirty crypto -> M06
+    q4 = "помытые usdt грязный амл чекер блок вывод"
+    expanded4 = FTSRouter.expand_query(q4)
+    assert "Chainalysis" in expanded4
+    assert FTSRouter.infer_module_from_slang(q4) == "M06"
+
+    # 5. Pump / abnormal volume -> M01
+    q5 = "памп без новостей в стакане плотности айсберг"
+    expanded5 = FTSRouter.expand_query(q5)
+    assert "манипуляции" in expanded5
+    assert FTSRouter.infer_module_from_slang(q5) == "M01"
+
+    # 6. Funding / cash & carry -> M03
+    q6 = "фандинг ставка финансирования дельта хедж"
+    expanded6 = FTSRouter.expand_query(q6)
+    assert "бессрочные" in expanded6
+    assert FTSRouter.infer_module_from_slang(q6) == "M03"
+

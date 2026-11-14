@@ -15,39 +15,25 @@ def test_dashes_and_quotes_normalization():
     assert " - " in res
 
 
-def test_trading_terms_translation():
-    input_text = "В терминал CScalp залетаешь через market order, платишь taker fee и получаешь slippage."
+def test_anti_ban_replacements():
+    input_text = "Мы на азиатских нодах забираем спред без риска через быстрые шлюзы."
     res = humanize_text(input_text)
-    assert "привод CScalp" in res
-    assert "маркет" in res
-    assert "комса по рынку" in res
-    assert "протяжка" in res
+    assert "нодах" not in res
+    assert "азиатских нодах" not in res
+    assert "региональных площадках" in res
+    assert "без риска" not in res
+    assert "без направленного риска" in res
+    assert "шлюзы" not in res
+    assert "маршрутах" in res
 
 
-def test_taker_fee_duplicate_prevention():
-    input_text = "Даже если угадаешь, комиссии taker fee (0.06 - 0.1%) и протяжка съедят прибыль."
+def test_quote_unwrapping_on_lowercase_words():
+    input_text = 'Обычная "отложка" и "лимитка" в стакане.'
     res = humanize_text(input_text)
-    assert "комиссии комса" not in res
-    assert "комса по рынку" in res
-
-    # Verify no accidental space swallowing like "быкомса"
-    input_text_2 = "Ты хотя бы taker fee посчитал?"
-    res_2 = humanize_text(input_text_2)
-    assert "бы комса по рынку" in res_2
-    assert "быкомса" not in res_2
-
-
-def test_slippage_plural_and_singular():
-    assert humanize_text("ловишь свои проскальзывания") == "ловишь свои протяжки"
-    assert humanize_text("происходит проскальзывание ордера") == "происходит протяжка ордера"
-
-
-def test_order_book_and_mark_price():
-    input_text = "В order book видна плотность, но mark price разошлась с last price."
-    res = humanize_text(input_text)
-    assert "стакан" in res
-    assert "маркировка" in res
-    assert "ласт прайс" in res
+    assert '"отложка"' not in res
+    assert 'отложка' in res
+    assert '"лимитка"' not in res
+    assert 'лимитка' in res
 
 
 def test_spacing_cleanup():

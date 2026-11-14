@@ -13,6 +13,40 @@ from typing import List, Dict, Any, Optional, Set, Tuple
 from src.indexer.unit_econ_scaler import scale_unit_econ_text
 
 
+SLANG_QUERY_EXPANSIONS: List[Dict[str, Any]] = [
+    {
+        "patterns": [r"добав", r"усредн", r"нож", r"марж.*впритык", r"сижу не дышу", r"тян.*лосс", r"пересид", r"ликвид"],
+        "keywords": ["мартингейл", "келли", "риск", "разорения", "ликвидация", "математическое", "ожидание"],
+        "target_module": "M07",
+    },
+    {
+        "patterns": [r"безубыток", r"\bбу\b", r"\bб/у\b", r"сняло тиком", r"выбило", r"вынос", r"проскальз", r"протяжк", r"тигер", r"тайгер", r"cscalp", r"серверный стоп", r"триггер", r"тейк"],
+        "keywords": ["вынос", "стопов", "проскальзывание", "исполнение", "стакан", "сквиз", "триггер", "задержка"],
+        "target_module": "M04",
+    },
+    {
+        "patterns": [r"делистинг", r"вывод закрыли", r"застрял", r"замороз", r"спред", r"арбитраж", r"разниц.*курс", r"межбирж"],
+        "keywords": ["делистинг", "стакан", "ликвидность", "спред", "межбиржевой", "вывод", "арбитраж"],
+        "target_module": "M02",
+    },
+    {
+        "patterns": [r"помытые", r"грязь", r"амл", r"aml", r"заблокиру", r"заблочил", r"kyc", r"блок.*вывод", r"грязный usdt", r"чекер", r"холд"],
+        "keywords": ["AML", "комплаенс", "блокировка", "грязный", "USDT", "Chainalysis", "риск", "холд"],
+        "target_module": "M06",
+    },
+    {
+        "patterns": [r"памп", r"дуреет", r"без новостей", r"спалить", r"аномали", r"скринер", r"плотност", r"айсберг", r"ракета"],
+        "keywords": ["аномальная", "активность", "стакан", "манипуляции", "маркет-мейкер", "разлоки", "объемы"],
+        "target_module": "M01",
+    },
+    {
+        "patterns": [r"фандинг", r"funding", r"дельта", r"захеджир", r"стриж", r"cash.*carry", r"ставка финансирования"],
+        "keywords": ["фандинг", "ставка", "финансирования", "бессрочные", "свопы", "хеджирование", "арбитраж"],
+        "target_module": "M03",
+    },
+]
+
+
 class FTSRouter:
     def __init__(self, db_path: Path | str):
         self.db_path = Path(db_path)
@@ -33,6 +67,39 @@ class FTSRouter:
             return ""
         # Build OR query for high recall
         return " OR ".join(f'"{t}"' for t in clean_tokens)
+
+    @classmethod
+    def expand_query(cls, query: str) -> str:
+        """Expands trader slang into formal market microstructure and KB keywords."""
+        q_lower = query.lower()
+        added_keywords: List[str] = []
+        for entry in SLANG_QUERY_EXPANSIONS:
+            for pat in entry["patterns"]:
+                if re.search(pat, q_lower):
+                    added_keywords.extend(entry["keywords"])
+                    break
+        if not added_keywords:
+            return query
+        seen = set()
+        unique_keywords = [k for k in added_keywords if not (k.lower() in seen or seen.add(k.lower()))]
+        return f"{query} {' '.join(unique_keywords)}"
+
+    @classmethod
+    def infer_module_from_slang(cls, text: str) -> Optional[str]:
+        """Infers the most relevant curriculum module (M01-M07) based on trader slang patterns."""
+        q_lower = text.lower()
+        scores: Dict[str, int] = {}
+        for entry in SLANG_QUERY_EXPANSIONS:
+            match_count = 0
+            for pat in entry["patterns"]:
+                if re.search(pat, q_lower):
+                    match_count += 1
+            if match_count > 0:
+                mod = entry["target_module"]
+                scores[mod] = scores.get(mod, 0) + match_count
+        if not scores:
+            return None
+        return max(scores.items(), key=lambda x: x[1])[0]
 
     def record_outbound(
         self,
@@ -99,7 +166,8 @@ class FTSRouter:
         If module filter produces no hits, falls back to global search.
         Deprioritizes battlecards present in used_cards.
         """
-        fts_q = self._sanitize_query(query)
+        expanded_q = self.expand_query(query)
+        fts_q = self._sanitize_query(expanded_q)
         if not fts_q:
             return []
 
@@ -177,7 +245,8 @@ class FTSRouter:
         
         Deprioritizes sections present in used_sections.
         """
-        fts_q = self._sanitize_query(query)
+        expanded_q = self.expand_query(query)
+        fts_q = self._sanitize_query(expanded_q)
         if not fts_q:
             return []
 
@@ -236,7 +305,8 @@ class FTSRouter:
 
     def search_glossary(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """Search glossary terms via FTS5 BM25 rank."""
-        fts_q = self._sanitize_query(query)
+        expanded_q = self.expand_query(query)
+        fts_q = self._sanitize_query(expanded_q)
         if not fts_q:
             return []
 
@@ -287,10 +357,13 @@ class FTSRouter:
         has_card_filters = bool(chat_id or exclude_cards)
         has_sec_filters = bool(chat_id or exclude_sections)
 
-        cards = self.search_battlecards(text, module=module, limit=1, used_cards=used_cards if has_card_filters else None)
+        inferred_module = self.infer_module_from_slang(text)
+        active_module = module or inferred_module
+
+        cards = self.search_battlecards(text, module=active_module, limit=1, used_cards=used_cards if has_card_filters else None)
         best_card = cards[0] if cards else None
 
-        chapters = self.search_chapters(text, module=module, limit=1, used_sections=used_sections if has_sec_filters else None)
+        chapters = self.search_chapters(text, module=active_module, limit=1, used_sections=used_sections if has_sec_filters else None)
         best_chapter = None
         if chapters:
             ch = chapters[0]
@@ -315,7 +388,7 @@ class FTSRouter:
 
         return {
             "query": text,
-            "module_filter": module,
+            "module_filter": active_module,
             "deposit_est": deposit_est,
             "chat_id": chat_id,
             "chat_memory": [item["our_response_text"] for item in recent_outbound],

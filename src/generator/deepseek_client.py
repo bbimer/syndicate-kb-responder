@@ -74,15 +74,19 @@ class DeepSeekClient:
         t0 = time.perf_counter()
         effective_max_tokens = max_tokens or self.max_tokens
 
-        response = await self._client.chat.completions.create(
-            model=self.model,
-            messages=[
+        kwargs: Dict[str, Any] = {
+            "model": self.model,
+            "messages": [
                 {"role": "system", "content": STATIC_SYSTEM_PREFIX},
                 {"role": "user", "content": user_prompt}
             ],
-            max_tokens=effective_max_tokens,
-            temperature=self.temperature
-        )
+            "max_tokens": effective_max_tokens,
+            "temperature": self.temperature
+        }
+        if "openrouter.ai" in self.base_url:
+            kwargs["extra_body"] = {"provider": {"order": ["DeepSeek"]}}
+
+        response = await self._client.chat.completions.create(**kwargs)
         latency = time.perf_counter() - t0
 
         choice = response.choices[0]
@@ -95,8 +99,11 @@ class DeepSeekClient:
 
         # Check prompt caching details if available
         cached_tokens = 0
-        if usage and hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
-            cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
+        if usage:
+            if hasattr(usage, "prompt_cache_hit_tokens") and getattr(usage, "prompt_cache_hit_tokens", None) is not None:
+                cached_tokens = getattr(usage, "prompt_cache_hit_tokens", 0) or 0
+            elif hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
+                cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
 
         cost = self._calc_cost(prompt_tokens, cached_tokens, completion_tokens)
 
