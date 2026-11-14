@@ -41,3 +41,14 @@ def test_spacing_cleanup():
     res = humanize_text(input_text)
     assert "   " not in res
     assert "\n\n\n" not in res
+
+
+def test_artifact_words_cleanup():
+    input_text = "Там риск нулевой, ибо нет движения. Зашел с тем же нотальным объемом. На какой плечо ты залетел?"
+    res = humanize_text(input_text)
+    assert "ибо" not in res.lower()
+    assert "потому что" in res.lower()
+    assert "нотальным" not in res.lower()
+    assert "номинальным" in res.lower()
+    assert "на какой плечо" not in res.lower()
+    assert "на какое плечо" in res.lower()

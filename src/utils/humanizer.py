@@ -17,6 +17,9 @@ ANTI_BAN_REPLACEMENTS: List[Tuple[re.Pattern, str]] = [
     (re.compile(r'\bнод(?:ах|ы|ам|е|у|ами)\b', re.I), 'площадках'),
     (re.compile(r'\bшлюз(?:ах|ы|ам|е|у|ами|ов)?\b', re.I), 'маршрутах'),
     (re.compile(r'\bбез\s+риска\b', re.I), 'без направленного риска'),
+    (re.compile(r'\bибо\b', re.I), 'потому что'),
+    (re.compile(r'\bнотальн(?:ым|ый|ого|ом|ое)\b', re.I), 'номинальным'),
+    (re.compile(r'\bна\s+какой\s+плечо\b', re.I), 'на какое плечо'),
 ]
 
 
